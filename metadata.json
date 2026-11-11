@@ -1,0 +1,6 @@
+{
+  "name": "Relay Gateway",
+  "description": "Android SMS relay gateway for Laravel backend with durable ledger, SIM selection, and zero-loss callback reconciliation.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

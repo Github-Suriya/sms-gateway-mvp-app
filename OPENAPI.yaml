@@ -1,0 +1,357 @@
+openapi: 3.0.3
+info:
+  title: Android ↔ Laravel SMS Gateway API
+  description: Authoritative REST contract for Relay Gateway Android client and Laravel backend.
+  version: 1.1.0
+servers:
+  - url: https://gateway.example.com/api/v1
+    description: Production HTTPS endpoint
+
+paths:
+  /devices/pair:
+    post:
+      summary: Pair an Android device with the Laravel backend
+      description: Single-use 5-minute pairing code challenge. Bearer token is returned once.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - pairing_code
+                - device_name
+                - installation_id
+                - app_version
+                - android_version
+              properties:
+                pairing_code:
+                  type: string
+                  example: "12345678"
+                device_name:
+                  type: string
+                  example: "Office Android 01"
+                installation_id:
+                  type: string
+                  format: uuid
+                  example: "d3d30a76-f58c-4e25-a44a-7f3d31c887ee"
+                app_version:
+                  type: string
+                  example: "1.0.0"
+                android_version:
+                  type: string
+                  example: "15"
+      responses:
+        '201':
+          description: Device paired successfully. Token returned once.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - device_id
+                  - device_token
+                  - token_type
+                  - server_time
+                  - config
+                properties:
+                  device_id:
+                    type: string
+                    format: uuid
+                  device_token:
+                    type: string
+                  token_type:
+                    type: string
+                    example: Bearer
+                  server_time:
+                    type: string
+                    format: date-time
+                  config:
+                    type: object
+                    properties:
+                      poll_interval_seconds:
+                        type: integer
+                        example: 15
+                      heartbeat_interval_seconds:
+                        type: integer
+                        example: 30
+        '401':
+          description: Invalid pairing code
+        '409':
+          description: Device already paired
+        '410':
+          description: Pairing challenge expired
+        '429':
+          description: Rate limited
+
+  /device/heartbeat:
+    post:
+      summary: Send device health and capability telemetry
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - device_id
+                - app_version
+                - android_version
+                - battery_pct
+                - sms_permission_granted
+                - gateway_active
+                - sim_label
+              properties:
+                device_id:
+                  type: string
+                  format: uuid
+                app_version:
+                  type: string
+                android_version:
+                  type: string
+                battery_pct:
+                  type: integer
+                  minimum: 0
+                  maximum: 100
+                sms_permission_granted:
+                  type: boolean
+                gateway_active:
+                  type: boolean
+                sim_label:
+                  type: string
+                network_type:
+                  type: string
+                  enum: [wifi, mobile, none, other]
+      responses:
+        '200':
+          description: Heartbeat accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - server_time
+                  - device_status
+                  - sending_enabled
+                  - config
+                properties:
+                  server_time:
+                    type: string
+                    format: date-time
+                  device_status:
+                    type: string
+                    example: active
+                  sending_enabled:
+                    type: boolean
+                  config:
+                    type: object
+                    properties:
+                      poll_interval_seconds:
+                        type: integer
+                      heartbeat_interval_seconds:
+                        type: integer
+        '403':
+          description: Device revoked by admin
+
+  /device/jobs/next:
+    get:
+      summary: Poll for next SMS job in queue
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Claim outcome
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - server_time
+                  - job
+                properties:
+                  server_time:
+                    type: string
+                    format: date-time
+                  retry_after_seconds:
+                    type: integer
+                  job:
+                    nullable: true
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                        format: uuid
+                      lease_id:
+                        type: string
+                        format: uuid
+                      lease_expires_at:
+                        type: string
+                        format: date-time
+                      destination_e164:
+                        type: string
+                        example: "+919876543210"
+                      body:
+                        type: string
+                      subscription_preference:
+                        type: string
+                      created_at:
+                        type: string
+                        format: date-time
+
+  /device/jobs/{job_id}/start:
+    post:
+      summary: Acknowledge start before invoking native SmsManager
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - lease_id
+                - event_id
+                - occurred_at
+              properties:
+                lease_id:
+                  type: string
+                  format: uuid
+                event_id:
+                  type: string
+                  format: uuid
+                occurred_at:
+                  type: string
+                  format: date-time
+      responses:
+        '200':
+          description: Start confirmed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  job_id:
+                    type: string
+                    format: uuid
+                  status:
+                    type: string
+                    example: sending
+                  accepted:
+                    type: boolean
+        '409':
+          description: Stale lease or invalid transition
+
+  /device/jobs/{job_id}/events:
+    post:
+      summary: Report authoritative sent or delivery callback outcome
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - lease_id
+                - event_id
+                - event_type
+                - occurred_at
+                - result_code
+              properties:
+                lease_id:
+                  type: string
+                  format: uuid
+                event_id:
+                  type: string
+                  format: uuid
+                event_type:
+                  type: string
+                  enum: [sms_sent, sms_send_failed, sms_delivered, sms_delivery_failed]
+                occurred_at:
+                  type: string
+                  format: date-time
+                result_code:
+                  type: string
+                  enum:
+                    - RESULT_OK
+                    - RESULT_ERROR_GENERIC_FAILURE
+                    - RESULT_ERROR_RADIO_OFF
+                    - RESULT_ERROR_NULL_PDU
+                    - RESULT_ERROR_NO_SERVICE
+                    - RESULT_ERROR_LIMIT_EXCEEDED
+                    - RESULT_ERROR_FDN_CHECK_FAILURE
+                    - RESULT_ERROR_SHORT_CODE_NOT_ALLOWED
+                    - RESULT_ERROR_SHORT_CODE_NEVER_ALLOWED
+                    - RESULT_ERROR_UNKNOWN
+                    - RESULT_CANCELED
+                failure_code:
+                  type: string
+                  enum: [NO_SIM, NO_SERVICE, PERMISSION_DENIED, RADIO_OFF, GENERIC_FAILURE, LIMIT_EXCEEDED, DELIVERY_FAILED]
+                metadata:
+                  type: object
+                  properties:
+                    parts_total:
+                      type: integer
+                      minimum: 1
+                      maximum: 20
+      responses:
+        '200':
+          description: Event accepted
+        '409':
+          description: Event ID conflict or stale lease
+
+  /device/jobs/{job_id}:
+    get:
+      summary: Reconcile job status after crash or restart
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Job status retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  job_id:
+                    type: string
+                    format: uuid
+                  status:
+                    type: string
+                  lease_id:
+                    type: string
+                    format: uuid
+                  last_event_at:
+                    type: string
+                    format: date-time
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
